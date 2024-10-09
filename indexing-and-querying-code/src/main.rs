@@ -1,4 +1,6 @@
+use swiftide::traits::SimplePrompt;
 use std::{path::PathBuf, str::FromStr};
+use dotenv::dotenv;
 
 use anyhow::{Context as _, Result};
 use clap::Parser;
@@ -7,10 +9,10 @@ use qdrant_client::qdrant::SearchPointsBuilder;
 use swiftide::{
     indexing::Pipeline,
     integrations::{openai::OpenAI, qdrant::Qdrant, redis::Redis, treesitter::SupportedLanguages},
-    loaders::FileLoader,
-    transformers::{ChunkCode, ChunkMarkdown, Embed, MetadataQACode, MetadataQAText},
-    EmbeddingModel, SimplePrompt,
 };
+use swiftide::indexing::EmbeddingModel;
+use swiftide::indexing::loaders::FileLoader;
+use swiftide::indexing::transformers::{ChunkCode, ChunkMarkdown, Embed, MetadataQACode, MetadataQAText};
 
 #[derive(Parser, Debug)]
 #[command(version, about, long_about = None)]
@@ -27,12 +29,13 @@ struct Args {
 #[tokio::main]
 async fn main() -> Result<()> {
     tracing_subscriber::fmt::init();
+    dotenv().ok();
 
     let args = Args::parse();
 
     let openai = OpenAI::builder()
         .default_embed_model("text-embedding-3-small")
-        .default_prompt_model("gpt-3.5-turbo")
+        .default_prompt_model("gpt-4o-mini")
         .build()?;
 
     let qdrant = Qdrant::builder()
@@ -41,11 +44,6 @@ async fn main() -> Result<()> {
         .build()?;
 
     index_all(&args.language, &args.path, &openai, &qdrant).await?;
-
-    let openai = OpenAI::builder()
-        .default_embed_model("text-embedding-3-small")
-        .default_prompt_model("gpt-4o")
-        .build()?;
 
     let response = query(&openai, &args.query).await?;
     println!("{}", response);
@@ -64,7 +62,7 @@ async fn index_all(language: &str, path: &PathBuf, openai: &OpenAI, qdrant: &Qdr
         Pipeline::from_loader(FileLoader::new(path).with_extensions(&extensions))
             .with_concurrency(50)
             .filter_cached(Redis::try_from_url(
-                "redis://localhost:6379",
+                "redis://localhost:6397",
                 "swiftide-tutorial",
             )?)
             .split_by(|node| {
@@ -90,7 +88,7 @@ async fn index_all(language: &str, path: &PathBuf, openai: &OpenAI, qdrant: &Qdr
         .then(MetadataQAText::new(openai.clone()));
 
     code.merge(markdown)
-        .then_in_batch(50, Embed::new(openai.clone()))
+        .then_in_batch(Embed::new(openai.clone()).with_batch_size(50))
         .then_store_with(qdrant.clone())
         .run()
         .await
