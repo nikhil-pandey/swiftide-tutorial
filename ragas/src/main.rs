@@ -174,7 +174,7 @@ async fn index_all(language: &str, path: &PathBuf, context: &Context) -> Result<
 
     // Merge both pipelines and generate embeddings
     code.merge(markdown)
-        .then_in_batch(50, Embed::new(context.openai.clone()))
+        .then_in_batch(Embed::new(context.openai.clone()).with_batch_size(50))
         .log_errors()
         .filter_errors()
         .then_store_with(context.qdrant.clone())
